@@ -5,6 +5,7 @@ var assert = require('assert')
   , fs = require('fs')
   , mongo = require('mongodb')
   , Grid = require('../')
+  , crypto = require('crypto')
   , checksum = require('checksum')
   , request = require('request')
   , http = require('http')
@@ -551,27 +552,37 @@ describe('test', function(){
 
     //issue #46
     it('should be able to pipe to http responses and have consequent results', function (done) {
-    var server = http.createServer(function (request, response) {
-      g.createReadStream({filename: 'logo.png'}).pipe(response);
-    });
-    server.listen(8000, function () {
-      var doneCounter = 0;
-      var totalCounter = 100;
-      var checksums = [];
-      for (var i = totalCounter; i-- > 0;) {
-      request('http://localhost:8000', function (error, response, body) {
-        checksums.push(checksum(body));
-          if (++doneCounter == totalCounter) {
-            //unique and count the checksums. Only one checksum should exist!
-            assert(checksums.filter(function (value, index, self) {
-              return self.indexOf(value) === index;
-            }).length === 1);
-            done();
-          }
+      // The issue only occurs when the file is chunked so create a 1MB test file
+      var file = fixturesDir + 'blob';
+      fs.writeFile(file, crypto.randomBytes(1024*1024), function(err) {
+        var writeStream = g.createWriteStream({filename: 'blob'});
+        fs.createReadStream(file).pipe(writeStream);
+
+        writeStream.on('close', function() {
+          fs.unlinkSync(file);
+          var server = http.createServer(function (request, response) {
+            g.createReadStream({filename: 'blob'}).pipe(response);
+          });
+          server.listen(8000, function () {
+            var doneCounter = 0;
+            var totalCounter = 100;
+            var checksums = [];
+            for (var i = totalCounter; i-- > 0;) {
+              request('http://localhost:8000', function (error, response, body) {
+                checksums.push(checksum(body));
+                if (++doneCounter == totalCounter) {
+                  //unique and count the checksums. Only one checksum should exist!
+                  assert(checksums.filter(function (value, index, self) {
+                    return self.indexOf(value) === index;
+                  }).length === 1);
+                  done();
+                }
+              });
+            }
+          });
         });
-      }
-     });
-    })
+      });
+    });
   });
 
   after(function (done) {
